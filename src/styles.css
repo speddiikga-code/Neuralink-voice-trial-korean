@@ -147,7 +147,11 @@ output { font: inherit; color: inherit; }
 
 .ghost-btn {
   appearance: none;
+  display: inline-flex;
+  align-items: center;
   background: transparent;
+  color: var(--ink);
+  text-decoration: none;
   border: 1px solid var(--rule);
   border-radius: var(--r-s);
   padding: 6px 12px;

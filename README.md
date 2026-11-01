@@ -4,6 +4,8 @@
 
 *A switch-scanning AAC prototype driven by EEG headband events (double blink, jaw clench, eyes-closed alpha), with an in-browser signal simulator.*
 
+> Neuralink의 VOICE 시연 영상을 보고 시작한 개인 프로젝트이며, Neuralink와는 관련이 없습니다.
+
 ![NeuroVoice 데스크톱 화면](docs/screenshot-desktop.png)
 
 ## 지금 상태

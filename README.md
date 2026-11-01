@@ -37,6 +37,14 @@
 
 <img src="docs/screenshot-mobile.png" width="300" alt="NeuroVoice 모바일 화면(어두운 테마)">
 
+## 2.5D 아레나 (화면 시안)
+
+`arena.html`은 같은 흐름을 쿼터뷰 장면으로 보여 주는 디자인 시안입니다. 섬 가장자리의 기둥 네 개가 전극 배치(TP9, AF7, AF8, TP10)를, 위쪽의 작은 돌이 기준 전극 Fpz를 나타내고, 가운데 아바타 둘레의 크리스털이 답변 후보입니다. 스캔 하이라이트가 크리스털을 돌고, 데모 루프가 두 번 깜빡임(선택), 이 악물기(판 바꾸기), 눈 감기(뒤로)를 차례로 보여 줍니다. 실제 입력과 게임 동작은 아직 연결하지 않았습니다.
+
+![NeuroVoice 2.5D 아레나 화면](docs/screenshot-arena.png)
+
+장면은 Three.js(r128, CDN)로 그립니다. 브라우저 콘솔에서 `NVArena.select()`, `NVArena.switchBoard()`, `NVArena.goBack()`으로 연출을 직접 볼 수 있습니다.
+
 ## 실행
 
 빌드 과정이 없습니다. 저장소를 받은 뒤 `index.html`을 브라우저로 열거나, 로컬 서버로 띄웁니다.
@@ -49,7 +57,7 @@ python3 -m http.server 5173
 
 - 시뮬레이터 단축키: `B` 깜빡임, `V` 두 번 깜빡임, `J` 이 악물기(누르고 있기), `E` 눈 감기(누르고 있기)
 - 브라우저 콘솔에서 `NV.app.sim.doubleBlink()`처럼 신호를 직접 넣어 볼 수 있습니다.
-- 한 파일짜리 버전: `npm run build` → `dist/neurovoice.html`
+- 한 파일짜리 버전: `npm run build` → `dist/neurovoice.html` (아레나는 `node scripts/build-standalone.mjs --page=arena.html`)
 
 ## 구조
 
@@ -76,8 +84,9 @@ flowchart LR
 | `src/speech.js` | 음성 합성, 음성 인식 |
 | `src/monitor.js` | 캔버스 파형 그리기 |
 | `src/app.js` | 연결과 화면 상태 |
+| `arena.html`, `src/arena.js`, `src/arena.css` | 2.5D 아레나 장면(디자인 시안) |
 
-외부 의존성은 없습니다. 모든 스크립트는 브라우저와 Node 양쪽에서 읽히는 형태(UMD)라서 신호 처리 코드를 그대로 테스트합니다.
+의사소통 화면은 외부 의존성이 없고, 아레나 화면만 Three.js를 CDN으로 불러옵니다. 신호 처리 스크립트는 브라우저와 Node 양쪽에서 읽히는 형태(UMD)라서 그대로 테스트할 수 있습니다.
 
 ## 신호 처리
 

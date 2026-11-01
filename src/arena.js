@@ -1,15 +1,20 @@
 /*
- * NeuroVoice Arena — 2.5D quarter-view design shell.
+ * NeuroVoice Arena — the 2.5D view of the same pipeline.
  * A floating island laid out like the Muse 2 montage: electrode pylons
  * (TP9, AF7, AF8, TP10) and the Fpz reference stone around an avatar in a
- * headband. Reply crystals sit on the scan ring and take the highlight in
- * turn, and a short demo loop plays the three gestures. Nothing here reads
- * real input yet: this is the look, not the game.
+ * headband. Reply crystals sit on the scan ring.
+ *
+ * The simulated headband, detector and scanner from the main screen drive it:
+ *   double blink → select the lit crystal (beam, speech)
+ *   jaw clench   → switch between suggested replies and quick phrases
+ *   eyes closed  → back to the first crystal (shield)
+ * The detector only sees the simulated signal, never the buttons.
  */
 (function () {
   'use strict';
 
   const THREE = window.THREE;
+  const NV = window.NV || {};
   const $ = (sel) => document.querySelector(sel);
   const stage = $('#stage');
   const labelsEl = $('#labels');
@@ -23,6 +28,7 @@
   }
 
   if (!THREE) { fail('3D 그래픽 라이브러리를 불러오지 못했어요. 연결을 확인한 뒤 새로고침해 주세요.'); return; }
+  if (!NV.SyntheticEEG || !NV.EventDetector || !NV.Scanner) { fail('신호 처리 스크립트를 불러오지 못했어요. 새로고침해 주세요.'); return; }
 
   let renderer;
   try {
@@ -123,7 +129,12 @@
     });
 
   // ---------- electrode pylons and the reference stone ----------
-  const GOOD = 0x5cc58b;
+  const LEVELS = {
+    good: { hex: 0x5cc58b, word: '좋음' },
+    fair: { hex: 0xe5a83d, word: '보통' },
+    bad: { hex: 0xff7b7b, word: '불량' },
+  };
+  const GOOD = LEVELS.good.hex;
   const ELECTRODES = [
     { name: 'TP9', deg: -118 },
     { name: 'AF7', deg: -40 },
@@ -155,7 +166,7 @@
     [base, column, cap].forEach((m) => { m.castShadow = true; m.receiveShadow = true; });
     g.add(base, column, band, cap, orb, halo, lamp);
     scene.add(g);
-    return { ...e, group: g, orb, halo, phase: hash(e.deg, 3) * 6 };
+    return { ...e, group: g, orb, halo, band, lamp, phase: hash(e.deg, 3) * 6, pulse: 0 };
   });
 
   const fpz = new THREE.Group();
@@ -189,11 +200,12 @@
   headband.position.y = 1.07;
   [robe, head, scarf].forEach((m) => { m.castShadow = true; });
   avatar.add(robe, belt, scarf, head, headband);
-  ELECTRODES.forEach((e) => {
+  const headDots = ELECTRODES.map((e) => {
     const p = polar(e.deg, 0.222);
     const dot = new THREE.Mesh(new THREE.SphereGeometry(0.036, 10, 8), new THREE.MeshStandardMaterial({ color: GOOD, emissive: GOOD, emissiveIntensity: 1.4 }));
     dot.position.set(p.x, 1.07, p.z);
     avatar.add(dot);
+    return dot;
   });
   const footRing = new THREE.Mesh(new THREE.RingGeometry(0.46, 0.56, 48), glow(0x7fe0d4, 0.5));
   footRing.rotation.x = -Math.PI / 2;
@@ -207,8 +219,8 @@
   scene.add(buddy, buddyLight);
 
   // ---------- labels that follow the scene ----------
-  function tag(cls, html) {
-    const el = document.createElement('div');
+  function tag(cls, html, element = 'div') {
+    const el = document.createElement(element);
     el.className = `tag ${cls}`;
     el.innerHTML = html;
     labelsEl.appendChild(el);
@@ -216,10 +228,6 @@
   }
 
   // ---------- reply crystals on the scan ring ----------
-  const WORD_SETS = [
-    { board: '답변 추천', words: ['김치찌개 먹고 싶어요', '죽이 좋겠어요', '조금만 먹을게요', '아직 배 안 고파요'] },
-    { board: '자주 쓰는 말', words: ['물 주세요', '고마워요', '잠깐만요', '도와주세요'] },
-  ];
   const LIT_EMISSIVE = 0x8a6f00;
   const IDLE_EMISSIVE = 0x1b5f5a;
   const gemGeo = new THREE.OctahedronGeometry(0.3, 0);
@@ -243,7 +251,8 @@
     ring.position.y = 0.25;
     g.add(pedestal, gem, ring);
     scene.add(g);
-    const label = tag('word', '<span class="word-text"></span><span class="dwell"></span>');
+    const label = tag('word', '<span class="word-text"></span><span class="dwell"></span>', 'button');
+    label.type = 'button';
     return { group: g, gem, gemMat, ring, label, text: label.querySelector('.word-text'), phase: i * 1.3, spin: 0.6 };
   });
 
@@ -251,9 +260,17 @@
   scene.add(litLamp);
 
   const meTag = tag('me', '<span class="name">나</span><span class="cells"><i></i><i></i><i></i><i></i></span>');
+  const cells = Array.from(meTag.querySelectorAll('.cells i'));
   const bubble = tag('bubble', '');
   bubble.hidden = true;
-  const pylonTags = pylons.map((p) => tag('pylon', `<i class="dot"></i>${p.name}`));
+  const pylonTags = pylons.map((p) => {
+    const b = tag('pylon', `<i class="dot"></i>${p.name}`, 'button');
+    b.type = 'button';
+    b.dataset.level = 'good';
+    b.setAttribute('aria-pressed', 'false');
+    b.title = `${p.name} 전극 떼기 또는 붙이기`;
+    return b;
+  });
   const fpzTag = tag('pylon ref', '<i class="dot"></i>Fpz 기준');
 
   // ---------- effects ----------
@@ -357,11 +374,21 @@
   }
 
   const feedEl = $('#feed');
-  function feed(text) {
+  function feed(text, muted = false) {
+    const first = feedEl.firstElementChild;
+    if (muted && first && first.dataset.text === text) {
+      // Fold repeats of the same quiet entry into a count.
+      const n = Number(first.dataset.count || 1) + 1;
+      first.dataset.count = String(n);
+      first.textContent = `${text} ×${n}`;
+      return;
+    }
     const li = document.createElement('li');
     li.textContent = text;
+    li.dataset.text = text;
+    if (muted) li.className = 'muted';
     feedEl.prepend(li);
-    while (feedEl.children.length > 4) feedEl.lastElementChild.remove();
+    while (feedEl.children.length > 5) feedEl.lastElementChild.remove();
   }
 
   // ---------- tiny animation helpers ----------
@@ -380,25 +407,31 @@
     cooldowns.push({ el, t0: now, dur });
   }
 
-  // ---------- demo loop: the scan steps, and every few steps a gesture fires ----------
-  const DWELL = 1.2;
-  const SCRIPT = [
-    { steps: 6, gesture: 'blink' },
-    { steps: 5, gesture: 'blink' },
-    { steps: 3, gesture: 'jaw' },
-    { steps: 7, gesture: 'blink' },
-    { steps: 2, gesture: 'eyes' },
+  // ---------- signal chain (same as the main screen) ----------
+  const FS = 256;
+  const sim = new NV.SyntheticEEG({ fs: FS, seed: (Date.now() % 100000) + 1 });
+  const detector = new NV.EventDetector({ fs: FS, channels: sim.channels, displaySeconds: 4 });
+  detector.process(sim.generate(FS * 3)); // a few seconds of history so the strip opens full
+
+  const EXAMPLE_PARTNER = '오늘 점심 뭐 먹고 싶어요?';
+  const boards = [
+    { name: '답변 추천', words: [] },
+    { name: '자주 쓰는 말', words: ['물 주세요', '고마워요', '잠깐만요', '도와주세요'] },
   ];
-  const demo = { set: 0, lit: 0, nextStep: 1.2, beat: 0, steps: 0 };
-  const signal = { blinkAt: -9, jawUntil: 0, eyesUntil: 0 };
+  let boardIndex = 0;
+  let lit = 0;
+  let shieldTarget = 0;
+  let voiceOn = !!(NV.Speaker && NV.Speaker.supported);
 
-  function setWords() {
-    WORD_SETS[demo.set].words.forEach((w, i) => { crystals[i].text.textContent = w; });
-    $('#stat-board').textContent = WORD_SETS[demo.set].board;
-  }
+  // Highlight history in stream time, so a gesture selects what was lit when it began.
+  const scanTrail = [];
+  const stateAt = (t) => {
+    for (let i = scanTrail.length - 1; i >= 0; i--) if (scanTrail[i].t <= t) return scanTrail[i].s;
+    return null;
+  };
 
-  function light(index) {
-    demo.lit = index;
+  function light(index, stepMs) {
+    lit = index;
     crystals.forEach((c, i) => {
       const on = i === index;
       c.label.classList.toggle('is-lit', on);
@@ -406,34 +439,41 @@
       c.gemMat.emissive.setHex(on ? LIT_EMISSIVE : IDLE_EMISSIVE);
       c.ring.material.opacity = on ? 0.85 : 0;
     });
-    crystals[index].group.updateMatrixWorld();
-    litLamp.position.set(0, 0.9, 0);
-    crystals[index].group.localToWorld(litLamp.position);
     const label = crystals[index].label;
+    label.style.setProperty('--dwell', `${stepMs}ms`);
     label.classList.remove('is-lit');
     void label.offsetWidth; // restart the dwell bar
     label.classList.add('is-lit');
+    crystals[index].group.updateMatrixWorld();
+    litLamp.position.set(0, 0.9, 0);
+    crystals[index].group.localToWorld(litLamp.position);
   }
 
-  function step() {
-    const beat = SCRIPT[demo.beat];
-    demo.steps += 1;
-    if (demo.steps > beat.steps) {
-      demo.steps = 0;
-      demo.beat = (demo.beat + 1) % SCRIPT.length;
-      if (beat.gesture === 'blink') select();
-      else if (beat.gesture === 'jaw') switchBoard();
-      else goBack();
-      return;
-    }
-    light((demo.lit + 1) % crystals.length);
+  const scanner = new NV.Scanner({
+    dwell: 1200,
+    onChange: (s) => {
+      scanTrail.push({ t: detector.time, s });
+      if (scanTrail.length > 40) scanTrail.shift();
+      if (s.phase === 'item') light(s.col, s.stepMs);
+    },
+  });
+
+  function showBoard(index) {
+    boardIndex = index;
+    boards[index].words.forEach((w, i) => { crystals[i].text.textContent = w; });
+    $('#stat-board').textContent = boards[index].name;
+    scanner.setGrid([crystals.map((_, i) => i)], 'linear');
   }
 
-  function select() {
-    const c = crystals[demo.lit];
+  function speak(text) {
+    if (voiceOn && NV.Speaker) NV.Speaker.speak(text);
+  }
+
+  function select(index, how) {
+    const c = crystals[index];
     const word = c.text.textContent;
-    fire('blink');
-    signal.blinkAt = now;
+    avatar.updateMatrixWorld();
+    c.group.updateMatrixWorld();
     const from = new THREE.Vector3(0, 1.07, 0);
     avatar.localToWorld(from);
     const to = new THREE.Vector3(0, 0.9, 0);
@@ -451,102 +491,287 @@
       burst.material.opacity = 0.9 * (1 - k);
     });
     c.gemMat.emissive.setHex(0xffffff);
-    tween(0.35, () => {}, () => { if (demo.lit === crystals.indexOf(c)) c.gemMat.emissive.setHex(LIT_EMISSIVE); });
+    tween(0.35, () => {}, () => c.gemMat.emissive.setHex(lit === index ? LIT_EMISSIVE : IDLE_EMISSIVE));
     tween(0.45, (k) => { avatar.position.y = 0.14 + Math.sin(k * Math.PI) * 0.16; });
-    floatText(c.group, new THREE.Vector3(0, 1.6, 0), '두 번 깜빡임');
+    floatText(c.group, new THREE.Vector3(0, 1.6, 0), how === 'gesture' ? '두 번 깜빡임' : '선택');
     bubble.textContent = word;
     bubble.hidden = false;
     clearTimeout(select.timer);
     select.timer = setTimeout(() => { bubble.hidden = true; }, 2600);
-    feed(`두 번 깜빡임 → “${word}”`);
-    demo.nextStep = now + 2.6;
+    speak(word);
+    feed(how === 'gesture' ? `두 번 깜빡임 → “${word}”` : `눌러서 고름 → “${word}”`);
   }
 
   function switchBoard() {
-    const next = (demo.set + 1) % WORD_SETS.length;
-    fire('jaw');
-    signal.jawUntil = now + 0.7;
+    const next = (boardIndex + 1) % boards.length;
     floatText(avatar, new THREE.Vector3(0, 1.75, 0), '이 악물기', true);
     crystals.forEach((c) => {
       c.label.classList.add('is-fading');
       c.spin = 9;
     });
     setTimeout(() => {
-      demo.set = next;
-      setWords();
+      showBoard(next);
       crystals.forEach((c) => {
         c.label.classList.remove('is-fading');
         c.spin = 0.6;
       });
-      light(0);
-    }, 450);
-    feed(`이 악물기 → ${WORD_SETS[next].board}`);
-    demo.nextStep = now + 1.8;
+    }, 380);
+    feed(`이 악물기 → ${boards[next].name}`);
   }
 
   function goBack() {
-    fire('eyes', 1.8);
-    signal.eyesUntil = now + 1.8;
+    shieldTarget = 1;
     floatText(avatar, new THREE.Vector3(0, 1.75, 0), '눈 감기', true);
-    tween(1.8, (k) => {
-      const a = Math.sin(k * Math.PI);
-      shield.material.opacity = 0.22 * a;
-      shield.scale.setScalar(0.85 + 0.15 * a);
-    });
-    light(0);
+    if (NV.Speaker && NV.Speaker.speaking) {
+      NV.Speaker.cancel();
+      feed('눈 감기 → 말하기 멈춤');
+      return;
+    }
+    scanner.reset();
     feed('눈 감기 → 처음부터 다시 훑기');
-    demo.nextStep = now + 2;
   }
 
-  // ---------- small signal strip in the corner (decorative) ----------
-  const MINI_N = 180;
-  const traces = [0, 1, 2, 3].map(() => new Float32Array(MINI_N));
-  let miniHead = 0;
-  let miniAcc = 0;
+  function renderQuality(q) {
+    q.forEach((level, i) => {
+      const hex = LEVELS[level].hex;
+      const p = pylons[i];
+      p.orb.material.color.setHex(hex);
+      p.orb.material.emissive.setHex(hex);
+      p.halo.material.color.setHex(hex);
+      p.band.material.color.setHex(hex);
+      p.band.material.emissive.setHex(hex);
+      p.lamp.color.setHex(hex);
+      p.lamp.intensity = level === 'bad' ? 0.35 : 0.9;
+      headDots[i].material.color.setHex(hex);
+      headDots[i].material.emissive.setHex(hex);
+      cells[i].dataset.level = level;
+      pylonTags[i].dataset.level = level;
+    });
+    const usable = q.filter((level) => level !== 'bad').length;
+    $('#stat-electrodes').textContent = `${usable}/4 사용 중`;
+  }
 
-  function sample(ch) {
-    const temporal = ch === 0 || ch === 3;
-    const eyes = now < signal.eyesUntil && temporal;
-    let v = Math.sin(now * 2 * Math.PI * 10 + ch) * (eyes ? 10 : 2.5) + Math.sin(now * 2.3 + ch * 1.7) * 3 + (Math.random() - 0.5) * 4;
-    const d = now - signal.blinkAt;
-    if (!temporal && d >= 0 && d < 0.75) {
-      const bump = (t0) => (d > t0 && d < t0 + 0.3 ? Math.sin(((d - t0) / 0.3) * Math.PI) : 0);
-      v -= 24 * (bump(0) + bump(0.42));
+  let lastQuality = sim.channels.map(() => 'good');
+  const pendingBlinks = new Map();
+  detector.on((ev) => {
+    switch (ev.type) {
+      case 'blink':
+        pylons[1].pulse = 1;
+        pylons[2].pulse = 1;
+        // Log a single blink only once it is clear no second blink followed.
+        pendingBlinks.set(ev.t, setTimeout(() => {
+          pendingBlinks.delete(ev.t);
+          feed('깜빡임 한 번 (선택 아님)', true);
+        }, 900));
+        break;
+      case 'doubleBlink': {
+        [ev.first, ev.t].forEach((t) => {
+          clearTimeout(pendingBlinks.get(t));
+          pendingBlinks.delete(t);
+        });
+        fire('blink');
+        const res = scanner.select(stateAt(ev.first));
+        if (res && res.type === 'item') select(res.item, 'gesture');
+        break;
+      }
+      case 'jawClench':
+        pylons[0].pulse = 1;
+        pylons[3].pulse = 1;
+        fire('jaw');
+        switchBoard();
+        break;
+      case 'eyesClosed':
+        fire('eyes', 1.6);
+        goBack();
+        break;
+      case 'eyesOpened':
+        shieldTarget = 0;
+        break;
+      case 'quality':
+        ev.quality.forEach((level, i) => {
+          if ((level === 'bad') !== (lastQuality[i] === 'bad')) {
+            feed(level === 'bad' ? `${sim.channels[i]} 접촉 불량, 감지에서 뺌` : `${sim.channels[i]} 접촉 회복`);
+          }
+        });
+        lastQuality = ev.quality.slice();
+        renderQuality(ev.quality);
+        break;
+      default:
+        break;
     }
-    if (now < signal.jawUntil && temporal) v += (Math.random() - 0.5) * 34;
-    return v;
+  });
+
+  // ---------- controls ----------
+  /** Press-and-hold gesture with a minimum length, so a quick tap still produces a usable signal. */
+  function holdControl(on, off, minMs) {
+    let token = 0;
+    let downAt = 0;
+    let active = false;
+    return {
+      start() {
+        if (active) return;
+        active = true;
+        token += 1;
+        downAt = performance.now();
+        on();
+      },
+      end() {
+        if (!active) return;
+        active = false;
+        const mine = token;
+        const rest = Math.max(0, minMs - (performance.now() - downAt));
+        const finish = () => { if (mine === token) off(); };
+        if (rest > 0) sim.after(rest / 1000, finish);
+        else finish();
+      },
+      tap() {
+        this.start();
+        this.end();
+      },
+    };
   }
 
-  function drawMini(dt) {
+  const jawCtl = holdControl(() => sim.jaw(true), () => sim.jaw(false), 650);
+  const eyesCtl = holdControl(() => sim.eyes(true), () => sim.eyes(false), 2400);
+
+  function bindHold(btn, ctl) {
+    let viaPointer = false;
+    btn.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      viaPointer = true;
+      try { btn.setPointerCapture(e.pointerId); } catch (err) { /* capture unavailable */ }
+      btn.classList.add('is-held');
+      ctl.start();
+    });
+    const release = () => {
+      if (!btn.classList.contains('is-held')) return;
+      btn.classList.remove('is-held');
+      ctl.end();
+    };
+    btn.addEventListener('pointerup', release);
+    btn.addEventListener('pointercancel', release);
+    btn.addEventListener('lostpointercapture', release);
+    btn.addEventListener('click', () => {
+      if (viaPointer) { viaPointer = false; return; }
+      ctl.tap(); // keyboard activation
+    });
+    btn.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+
+  slots.blink.addEventListener('click', () => sim.doubleBlink());
+  bindHold(slots.jaw, jawCtl);
+  bindHold(slots.eyes, eyesCtl);
+
+  // Physical keys (layout independent, so Korean input mode does not matter).
+  const CODE_TO_GESTURE = { KeyB: 'single', KeyV: 'blink', KeyJ: 'jaw', KeyE: 'eyes' };
+  document.addEventListener('keydown', (e) => {
+    const g = CODE_TO_GESTURE[e.code];
+    if (!g || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    if (g === 'single') sim.blink();
+    else if (g === 'blink') sim.doubleBlink();
+    else if (g === 'jaw') jawCtl.start();
+    else eyesCtl.start();
+    if (slots[g]) slots[g].classList.add('is-held');
+    e.preventDefault();
+  });
+  document.addEventListener('keyup', (e) => {
+    const g = CODE_TO_GESTURE[e.code];
+    if (!g) return;
+    if (g === 'jaw') jawCtl.end();
+    else if (g === 'eyes') eyesCtl.end();
+    if (slots[g]) slots[g].classList.remove('is-held');
+  });
+
+  // Tap a crystal to pick it directly, the way a caregiver would touch the board.
+  crystals.forEach((c, i) => {
+    c.label.addEventListener('click', () => {
+      scanner.reset(scanner.holdAfterSelect);
+      select(i, 'touch');
+    });
+  });
+
+  // Tap a pylon's tag to lift that electrode; bad channels drop out of detection.
+  pylonTags.forEach((b, i) => {
+    b.addEventListener('click', () => {
+      sim.contact[i] = !sim.contact[i];
+      b.setAttribute('aria-pressed', String(!sim.contact[i]));
+      feed(sim.contact[i] ? `${sim.channels[i]} 전극을 다시 붙임` : `${sim.channels[i]} 전극을 뗌`);
+    });
+  });
+
+  const voiceBtn = $('#voice-toggle');
+  const showVoice = () => {
+    voiceBtn.setAttribute('aria-pressed', String(voiceOn));
+    voiceBtn.textContent = voiceOn ? '음성 켜짐' : '음성 꺼짐';
+  };
+  if (!NV.Speaker || !NV.Speaker.supported) {
+    voiceBtn.disabled = true;
+    voiceBtn.textContent = '음성 출력 없음';
+  } else {
+    showVoice();
+    voiceBtn.addEventListener('click', () => {
+      voiceOn = !voiceOn;
+      if (!voiceOn) NV.Speaker.cancel();
+      showVoice();
+    });
+  }
+
+  const partnerInput = $('#partner-input');
+  function partnerSaid(text) {
+    $('#partner-text').textContent = text;
+    boards[0].words = NV.suggestReplies ? NV.suggestReplies(text).replies : boards[0].words;
+    showBoard(0);
+  }
+  $('#partner-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const text = partnerInput.value.trim();
+    if (!text) { partnerInput.focus(); return; }
+    partnerInput.value = '';
+    partnerInput.blur();
+    partnerSaid(text);
+    feed('상대방 말 → 답변 추천 새로 고름');
+  });
+
+  // ---------- signal strip in the corner: the detector's own filtered channels ----------
+  const MINI_N = FS * 3;
+  const miniBufs = [null, null, null, null];
+  function drawMini() {
     if (!mini.offsetParent || !mini.width) return;
-    miniAcc += dt * 70;
-    while (miniAcc >= 1) {
-      miniAcc -= 1;
-      for (let c = 0; c < 4; c++) traces[c][miniHead] = sample(c);
-      miniHead = (miniHead + 1) % MINI_N;
-    }
     const w = mini.width;
     const h = mini.height;
     const dpr = w / mini.clientWidth;
     mctx.clearRect(0, 0, w, h);
     const left = 34 * dpr;
+    const plotW = w - left - 6 * dpr;
     const rowH = h / 4;
+    const scale = (rowH * 0.42) / 100; // 100 µV fills about 40 % of a row
     mctx.font = `600 ${9 * dpr}px "IBM Plex Sans KR", sans-serif`;
     mctx.textBaseline = 'middle';
-    ['TP9', 'AF7', 'AF8', 'TP10'].forEach((name, c) => {
+    sim.channels.forEach((name, c) => {
       const mid = rowH * (c + 0.5);
+      const bad = lastQuality[c] === 'bad';
       mctx.fillStyle = 'rgba(159,180,176,0.9)';
       mctx.fillText(name, 6 * dpr, mid);
-      mctx.strokeStyle = 'rgba(207,227,221,0.95)';
-      mctx.lineWidth = 1.2 * dpr;
+      const buf = (miniBufs[c] = detector.display[c].latest(MINI_N, miniBufs[c]));
+      const n = buf.length;
+      if (n < 2) return;
+      mctx.save();
       mctx.beginPath();
-      for (let i = 0; i < MINI_N; i++) {
-        const v = traces[c][(miniHead + i) % MINI_N];
-        const x = left + (i / (MINI_N - 1)) * (w - left - 6 * dpr);
-        const y = mid - v * 0.32 * dpr;
+      mctx.rect(left, rowH * c, plotW, rowH);
+      mctx.clip();
+      mctx.strokeStyle = bad ? 'rgba(255,123,123,0.75)' : 'rgba(207,227,221,0.95)';
+      mctx.lineWidth = 1.1 * dpr;
+      mctx.beginPath();
+      const x0 = left + plotW * (1 - n / MINI_N);
+      for (let i = 0; i < n; i++) {
+        const x = x0 + (i / (MINI_N - 1)) * plotW;
+        const y = mid - buf[i] * scale;
         if (i === 0) mctx.moveTo(x, y); else mctx.lineTo(x, y);
       }
       mctx.stroke();
+      mctx.restore();
     });
   }
 
@@ -557,30 +782,40 @@
   const FPZ_ANCHOR = new THREE.Vector3(0, 1.0, 0);
   const statAlpha = $('#stat-alpha');
   let nextStat = 0;
+  let carry = 0;
 
   function animate(dt) {
-    if (now >= demo.nextStep) {
-      step();
-      if (demo.nextStep <= now) demo.nextStep = now + DWELL;
+    carry += dt * FS;
+    const n = Math.floor(carry);
+    if (n > 0) {
+      carry -= n;
+      detector.process(sim.generate(n));
     }
+
+    const s = shieldTarget ? 0.22 : 0;
+    shield.material.opacity += (s - shield.material.opacity) * Math.min(1, dt * 6);
+    shield.scale.setScalar(0.85 + shield.material.opacity * 0.7);
+
+    pylons.forEach((p) => {
+      p.pulse = Math.max(0, p.pulse - dt * 2.5);
+      const bob = reduceMotion ? 0 : Math.sin(now * 1.3 + p.phase) * 0.05;
+      p.orb.position.y = 2.68 + bob;
+      p.halo.position.y = p.orb.position.y;
+      p.halo.scale.setScalar(1 + (reduceMotion ? 0 : Math.sin(now * 2 + p.phase) * 0.08) + p.pulse * 0.9);
+      p.halo.material.opacity = 0.18 + p.pulse * 0.35;
+    });
 
     if (!reduceMotion) {
       crystals.forEach((c) => {
         c.gem.position.y = 0.9 + Math.sin(now * 1.7 + c.phase) * 0.07;
         c.gem.rotation.y += dt * c.spin;
       });
-      pylons.forEach((p) => {
-        const y = 2.68 + Math.sin(now * 1.3 + p.phase) * 0.05;
-        p.orb.position.y = y;
-        p.halo.position.y = y;
-        p.halo.scale.setScalar(1 + Math.sin(now * 2 + p.phase) * 0.08);
-      });
       fpzRing.position.y = 0.66 + Math.sin(now * 1.1) * 0.06;
       fpzRing.rotation.z += dt * 0.4;
       footRing.material.opacity = 0.35 + Math.sin(now * 2.2) * 0.15;
-      shards.forEach((s) => {
-        s.m.position.y = s.y + Math.sin(now * 0.6 + s.phase) * 0.2;
-        s.m.rotation.y += dt * 0.15;
+      shards.forEach((sh) => {
+        sh.m.position.y = sh.y + Math.sin(now * 0.6 + sh.phase) * 0.2;
+        sh.m.rotation.y += dt * 0.15;
       });
       if (particles) {
         const pos = particles.geometry.attributes.position;
@@ -617,9 +852,8 @@
       }
     }
     if (now >= nextStat) {
-      nextStat = now + 0.5;
-      const alpha = now < signal.eyesUntil ? 52 + Math.random() * 6 : 16 + Math.random() * 5;
-      statAlpha.textContent = `${Math.round(alpha)}%`;
+      nextStat = now + 0.25;
+      statAlpha.textContent = `${Math.round(detector.alphaShare * 100)}%`;
     }
   }
 
@@ -631,21 +865,21 @@
     pin(fpzTag, fpz, FPZ_ANCHOR);
   }
 
-  setWords();
-  light(0);
-  feed('데모 재생 중. 실제 입력은 아직 연결되지 않았어요.');
+  partnerSaid(EXAMPLE_PARTNER);
+  scanner.start();
+  feed('가상 헤드밴드 연결됨. 두 번 깜빡여서 크리스털을 고르세요.');
 
-  // Console handles for trying the effects by hand: NVArena.select(), .switchBoard(), .goBack()
-  window.NVArena = { select, switchBoard, goBack };
+  // Handles for poking at it from the browser console.
+  window.NVArena = { sim, detector, scanner, select: (i) => select(i, 'touch'), switchBoard, goBack };
 
   const clock = new THREE.Clock();
   function frame() {
-    const dt = Math.min(clock.getDelta(), 0.1);
+    const dt = Math.min(clock.getDelta(), 0.25);
     now = clock.elapsedTime;
     animate(dt);
     renderer.render(scene, camera);
     placeLabels();
-    drawMini(dt);
+    drawMini();
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);

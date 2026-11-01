@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>NeuroVoice Arena</title>
-<meta name="description" content="NeuroVoice의 신호와 스캔을 2.5D 쿼터뷰 장면으로 보여 주는 화면 시안. 게임 동작은 아직 없습니다.">
+<meta name="description" content="NeuroVoice의 신호와 스캔을 2.5D 쿼터뷰 장면으로 조작하는 화면. 신호는 가상 헤드밴드가 만듭니다.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=Nanum+Pen+Script&display=swap">
@@ -13,56 +13,76 @@
 <body>
 <div class="arena">
   <canvas id="stage" role="img" aria-label="떠 있는 섬 위에서 헤드밴드를 쓴 아바타가 네 개의 답변 크리스털 가운데 하나를 고르는 2.5D 장면. 섬 가장자리에는 TP9, AF7, AF8, TP10 전극 기둥이 서 있습니다."></canvas>
-  <div class="labels" id="labels" aria-hidden="true"></div>
+  <div class="labels" id="labels"></div>
 
   <header class="hud-top">
     <div class="title">
       <svg class="brand-mark" viewBox="0 0 34 20" aria-hidden="true"><path d="M1 11h7l2-4 3 9 3-14 3 13 2-4h12"/></svg>
       <div>
         <h1>NeuroVoice 아레나</h1>
-        <p>2.5D 화면 시안입니다. 게임 동작은 아직 없어요.</p>
+        <p>가상 신호로 움직이는 2.5D 화면이에요. 아래 버튼을 눌러 조작해 보세요.</p>
       </div>
     </div>
-    <a class="back" href="index.html">의사소통 화면으로</a>
+    <div class="top-actions">
+      <a class="hud-btn" href="index.html">의사소통 화면으로</a>
+      <button class="hud-btn" id="voice-toggle" type="button" aria-pressed="true">음성 켜짐</button>
+    </div>
   </header>
 
+  <div class="hud-left">
+  <form class="partner" id="partner-form" autocomplete="off">
+    <p class="partner-said"><span class="who">상대방</span><span id="partner-text"></span></p>
+    <div class="partner-row">
+      <label class="visually-hidden" for="partner-input">상대방이 한 말</label>
+      <input id="partner-input" type="text" placeholder="상대방이 한 말을 넣으면 답이 바뀌어요" enterkeyhint="send">
+      <button type="submit">입력</button>
+    </div>
+  </form>
+
   <dl class="stats" aria-label="신호 요약">
-    <div><dt>알파 비율</dt><dd id="stat-alpha">18%</dd></div>
+    <div><dt>알파 비율</dt><dd id="stat-alpha">–</dd></div>
     <div><dt>스캔 간격</dt><dd>1.2초</dd></div>
     <div><dt>판</dt><dd id="stat-board">답변 추천</dd></div>
-    <div><dt>전극</dt><dd>4/4 좋음</dd></div>
+    <div><dt>전극</dt><dd id="stat-electrodes">4/4 사용 중</dd></div>
   </dl>
+  </div>
 
   <ol class="feed" id="feed" aria-label="최근 동작" aria-live="polite"></ol>
 
   <div class="hud-bottom">
     <canvas class="mini-eeg" id="mini-eeg" aria-hidden="true"></canvas>
-    <div class="slots">
-      <div class="slot" data-gesture="blink">
+    <div class="slots" aria-label="가상 신호 보내기">
+      <button class="slot" type="button" data-gesture="blink">
         <svg viewBox="0 0 28 28" aria-hidden="true"><path d="M3 11c3 3 6 3 9 0"/><path d="M16 11c3 3 6 3 9 0"/><path d="M5 19c4 4 14 4 18 0"/></svg>
         <span class="slot-name">두 번 깜빡임</span>
         <span class="slot-act">선택</span>
         <kbd>V</kbd>
         <span class="cool"></span>
-      </div>
-      <div class="slot" data-gesture="jaw">
+      </button>
+      <button class="slot" type="button" data-gesture="jaw">
         <svg viewBox="0 0 28 28" aria-hidden="true"><rect x="4" y="8" width="20" height="12" rx="4"/><path d="M4 14h20"/><path d="M9 8v12M14 8v12M19 8v12"/></svg>
         <span class="slot-name">이 악물기</span>
         <span class="slot-act">판 바꾸기</span>
         <kbd>J</kbd>
         <span class="cool"></span>
-      </div>
-      <div class="slot" data-gesture="eyes">
+      </button>
+      <button class="slot" type="button" data-gesture="eyes">
         <svg viewBox="0 0 28 28" aria-hidden="true"><path d="M4 12c5 6 15 6 20 0"/><path d="M8 16l-2 3M14 17.5V21M20 16l2 3"/></svg>
         <span class="slot-name">눈 감기</span>
         <span class="slot-act">뒤로</span>
         <kbd>E</kbd>
         <span class="cool"></span>
-      </div>
+      </button>
     </div>
   </div>
 </div>
 
+<script src="src/dsp.js"></script>
+<script src="src/simulator.js"></script>
+<script src="src/detector.js"></script>
+<script src="src/suggest.js"></script>
+<script src="src/scanner.js"></script>
+<script src="src/speech.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="src/arena.js"></script>
 </body>
